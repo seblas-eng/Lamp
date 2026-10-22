@@ -1,0 +1,55 @@
+name: Run AvicaLite on Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-avica:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Download AvicaLite
+      run: |
+        curl -L "https://download.avica.com/AvicaLite_v8.0.8.9.exe" -o AvicaLite.exe
+
+    - name: Start AvicaLite
+      shell: powershell
+      run: |
+        Start-Process -FilePath ".\AvicaLite.exe" -WindowStyle Normal
+
+    - name: Wait for app to load (15 seconds)
+      shell: powershell
+      run: Start-Sleep -Seconds 15
+
+    - name: Take Screenshot
+      shell: powershell
+      run: |
+        Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Drawing
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        $file = "$(Get-Location)\screenshot.png"
+        $bitmap.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)
+        Write-Host "Screenshot saved to $file"
+
+    - name: Upload Screenshot
+      uses: actions/upload-artifact@v4
+      with:
+        name: avica-screenshot
+        path: screenshot.png
+        retention-days: 7
+
+    - name: Keep alive for 3 hours
+      shell: powershell
+      run: |
+        Write-Host "Keeping runner alive..."
+        for ($i = 1; $i -le 21600; $i++) {
+            Start-Sleep -Seconds 1
+        }
+
+ 
