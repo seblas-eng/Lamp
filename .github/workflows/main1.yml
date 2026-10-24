@@ -1,0 +1,73 @@
+name: cloudflared Browser
+
+on:
+  workflow_dispatch:
+
+jobs:
+  desktop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+
+    - name: Update system
+      run: |
+        sudo apt update
+    - name: Install XFCE + VNC
+      run: |
+        sudo apt install -y xfce4 xfce4-goodies
+        sudo apt install -y tigervnc-standalone-server
+        sudo apt install -y dbus-x11 x11-xserver-utils
+        sudo apt install -y git wget curl novnc websockify
+    - name: Configure VNC
+      run: |
+        mkdir -p ~/.vnc
+        echo "" | vncpasswd -f > ~/.vnc/passwd
+        chmod 600 ~/.vnc/passwd
+        cat <<'EOF' > ~/.vnc/xstartup
+        #!/bin/bash
+        unset SESSION_MANAGER
+        unset DBUS_SESSION_BUS_ADDRESS
+        
+        export XDG_RUNTIME_DIR=/tmp/runtime-$USER
+        mkdir -p $XDG_RUNTIME_DIR
+        
+        dbus-launch --exit-with-session startxfce4
+        EOF
+        chmod +x ~/.vnc/xstartup
+    - name: Start VNC server
+      run: |
+        vncserver -kill :1 || true
+        vncserver :1 -geometry 1920x1080 -depth 24
+    - name: Install noVNC
+      run: |
+        git clone https://github.com/novnc/noVNC.git
+        git clone https://github.com/novnc/websockify.git
+    - name: Start noVNC proxy
+      run: |
+        #./noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
+        websockify 0.0.0.0:6080 localhost:5901 --web=/usr/share/novnc/ &
+    - name: Install cloudflared
+      run: |
+        wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+        mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
+        chmod +x /usr/local/bin/cloudflared
+        
+    - name: Start Cloudflare Tunnel
+      run: |
+        cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
+        sleep 10
+        echo "Tunnel URL:"
+        grep trycloudflare tunnel.log || true
+    - name: Show connection info
+      run: |
+        echo "================================"
+        echo "OPEN THE URL ABOVE IN BROWSER"
+        echo "Then open:"
+        echo "/vnc.html"
+        echo "VNC PASSWORD: 123456"
+        echo "================================"
+    - name: Keep Runner Alive 6 Hours
+      run: |
+        echo "Runner keep-alive dimulai..."
+        sleep 21600        
