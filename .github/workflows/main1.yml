@@ -1,73 +1,140 @@
-name: cloudflared Browser
+name: rustdesk litemanager
 
 on:
   workflow_dispatch:
 
 jobs:
-  desktop:
+  remote-desktop:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
 
     steps:
+      - name: Install desktop environment
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xfce4 xfce4-goodies xorg dbus-x11 xrdp x11-xserver-utils xvfb \
+            imagemagick scrot
+      - name: Start virtual display with XFCE
+        run: |
+          echo "Starting Xvfb virtual display :0 with XFCE4..."
+          Xvfb :0 -screen 0 1920x1080x24 &
+          export DISPLAY=:0
+          nohup startxfce4 >/dev/null 2>&1 &
+          sleep 5
+          echo "XFCE4 desktop started on DISPLAY=:0"
+      
 
-    - name: Update system
-      run: |
-        sudo apt update
-    - name: Install XFCE + VNC
-      run: |
-        sudo apt install -y xfce4 xfce4-goodies
-        sudo apt install -y tigervnc-standalone-server
-        sudo apt install -y dbus-x11 x11-xserver-utils
-        sudo apt install -y git wget curl novnc websockify
-    - name: Configure VNC
-      run: |
-        mkdir -p ~/.vnc
-        echo "" | vncpasswd -f > ~/.vnc/passwd
-        chmod 600 ~/.vnc/passwd
-        cat <<'EOF' > ~/.vnc/xstartup
-        #!/bin/bash
-        unset SESSION_MANAGER
-        unset DBUS_SESSION_BUS_ADDRESS
-        
-        export XDG_RUNTIME_DIR=/tmp/runtime-$USER
-        mkdir -p $XDG_RUNTIME_DIR
-        
-        dbus-launch --exit-with-session startxfce4
-        EOF
-        chmod +x ~/.vnc/xstartup
-    - name: Start VNC server
-      run: |
-        vncserver -kill :1 || true
-        vncserver :1 -geometry 1920x1080 -depth 24
-    - name: Install noVNC
-      run: |
-        git clone https://github.com/novnc/noVNC.git
-        git clone https://github.com/novnc/websockify.git
-    - name: Start noVNC proxy
-      run: |
-        #./noVNC/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
-        websockify 0.0.0.0:6080 localhost:5901 --web=/usr/share/novnc/ &
-    - name: Install cloudflared
-      run: |
-        wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-        mv cloudflared-linux-amd64 /usr/local/bin/cloudflared
-        chmod +x /usr/local/bin/cloudflared
-        
-    - name: Start Cloudflare Tunnel
-      run: |
-        cloudflared tunnel --url http://localhost:6080 > tunnel.log 2>&1 &
-        sleep 10
-        echo "Tunnel URL:"
-        grep trycloudflare tunnel.log || true
-    - name: Show connection info
-      run: |
-        echo "================================"
-        echo "OPEN THE URL ABOVE IN BROWSER"
-        echo "Then open:"
-        echo "/vnc.html"
-        echo "VNC PASSWORD: 123456"
-        echo "================================"
-    - name: Keep Runner Alive 6 Hours
-      run: |
-        echo "Runner keep-alive dimulai..."
-        sleep 21600        
+      - name: Set password for runner
+        run: |
+          echo "runner:123456" | sudo chpasswd
+          echo "Password for user 'runner' set to 123456"
+      - name: Start xrdp service
+        run: |
+          sudo systemctl enable xrdp
+          sudo systemctl start xrdp
+          sudo systemctl status xrdp --no-pager
+      - name: Install RustDesk
+        run: |
+          wget https://github.com/rustdesk/rustdesk/releases/download/1.4.2/rustdesk-1.4.2-x86_64.deb -O rustdesk.deb
+          sudo apt-get update
+          sudo apt-get install -y ./rustdesk.deb || sudo apt-get install -f -y
+    
+      - name: Ensure rustdesk data dir exists
+        run: |
+          sudo mkdir -p /var/lib/rustdesk
+          sudo chown -R runner:runner /var/lib/rustdesk || true
+      - name: Start RustDesk (service or fallback)
+        run: |
+          sudo systemctl enable rustdesk.service >/dev/null 2>&1 || true
+          sudo systemctl start rustdesk.service >/dev/null 2>&1 || true
+          DISPLAY=:0 rustdesk &
+          if ! systemctl is-active --quiet rustdesk.service 2>/dev/null; then
+            echo "RustDesk systemd service not active — starting rustdesk binary in background"
+            sudo -u runner bash -c 'nohup rustdesk >/dev/null 2>&1 &'
+          fi
+      - name: Set password for RustDesk
+        run: |
+          sudo mkdir -p /var/lib/rustdesk
+          echo "123456" | sudo tee /var/lib/rustdesk/passwd >/dev/null
+          sudo chown runner:runner /var/lib/rustdesk/passwd || true
+          echo "Password set to 123456"
+      - name: Take screenshot of XFCE desktop
+        run: |
+          export DISPLAY=:0
+          mkdir -p screenshots
+          sleep 120
+          scrot "screenshots/screen-$(date +%s).png"
+      - name: Upload screenshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-screenshot
+          path: screenshots/*.png
+
+      - name: Download LiteManager ZIP
+        run: |
+          wget https://www.litemanager.com/soft/LiteManager_linux.zip -O LiteManager.zip
+          unzip LiteManager.zip
+          ls -lah
+      - name: Enter LiteManager folder & list files
+        run: |
+          cd LiteManager_linux
+          ls -lah
+  
+      - name: Start LiteManager Server
+        run: |
+          cd LiteManager_linux
+          chmod +x LiteManager || true
+          
+  
+          echo "Starting LiteManager..."
+          export DISPLAY=:0
+  
+          # Eksekusi semua yang tersedia
+          if [ -f "./lmserver" ]; then
+            nohup ./lmserver >/tmp/lm.log 2>&1 &
+          elif [ -f "./LiteManager" ]; then
+            nohup ./LiteManager >/tmp/lm.log 2>&1 &
+          fi
+  
+          sleep 5
+          echo "---- LiteManager LOG ----"
+          cat /tmp/lm.log || true
+
+      - name: Klik kiri pada koordinat X=588 Y=101
+        run: |
+          export DISPLAY=:0
+          sudo apt install -y xdotool
+          echo "Melakukan klik pada X=588 Y=101..."
+          xdotool mousemove 1052 260 click 1
+          sleep 3
+          xdotool mousemove 307 158 click 1
+          sleep 3
+          xdotool mousemove 347 214 click 1
+          sleep 3
+          xdotool mousemove 307 172 click 1
+          sleep 3
+          xdotool mousemove 349 228 click 1
+          echo "Klik selesai."
+          
+  
+      - name: Take screenshot of XFCE desktop
+        run: |
+          export DISPLAY=:0
+          mkdir -p screenshots
+          sleep 120
+          scrot "screenshots/screen-$(date +%s).png"
+      - name: Upload screenshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+           name: desktop-screenshot-a
+           path: screenshots/*.png      
+           
+      - name: Download Google rd
+        run: |
+          wget https://dl.google.com/linux/direct/chrome-remote-desktop_current_amd64.deb
+          sudo apt install -y ./chr*.deb
+            
+      - name: Keep Runner Alive 6 Hours
+        run: |
+          echo "Runner keep-alive dimulai..."
+          sleep 21600
