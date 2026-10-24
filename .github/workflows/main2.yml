@@ -1,0 +1,168 @@
+
+name: Cloudflared Browser Desktop
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Install XFCE, TigerVNC and dependencies
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            xfce4 xfce4-goodies \
+            tigervnc-standalone-server tigervnc-common \
+            dbus-x11 x11-xserver-utils \
+            git curl wget ca-certificates \
+            novnc websockify
+
+      - name: Configure VNC
+        env:
+          VNC_PASSWORD: "Abc12345"
+        run: |
+          mkdir -p ~/.vnc
+          chmod 700 ~/.vnc
+
+          printf '%s\n%s\nn\n' \
+            "$VNC_PASSWORD" "$VNC_PASSWORD" |
+            vncpasswd
+
+          chmod 600 ~/.vnc/passwd
+
+          cat > ~/.vnc/xstartup <<'EOF'
+          #!/bin/sh
+          unset SESSION_MANAGER
+          unset DBUS_SESSION_BUS_ADDRESS
+
+          export XDG_SESSION_TYPE=x11
+          export XDG_CURRENT_DESKTOP=XFCE
+          export DESKTOP_SESSION=xfce
+
+          exec dbus-launch --exit-with-session startxfce4
+          EOF
+
+          chmod +x ~/.vnc/xstartup
+
+      - name: Start VNC server
+        run: |
+          vncserver -kill :1 || true
+
+          vncserver :1 \
+            -localhost yes \
+            -geometry 1920x1080 \
+            -depth 24
+
+          sleep 5
+          vncserver -list
+
+          if ! ss -ltn | grep -q ':5901'; then
+            echo "ERROR: VNC port 5901 is not listening"
+            cat ~/.vnc/*.log || true
+            exit 1
+          fi
+
+      - name: Start noVNC WebSocket proxy
+        run: |
+          mkdir -p /tmp/novnc-logs
+
+          websockify \
+            --web=/usr/share/novnc \
+            127.0.0.1:6080 \
+            127.0.0.1:5901 \
+            > /tmp/novnc-logs/websockify.log 2>&1 &
+
+          echo $! > /tmp/websockify.pid
+
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:6080/vnc.html \
+              -o /dev/null; then
+              echo "noVNC web page OK"
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:6080/vnc.html \
+            -o /dev/null || {
+              cat /tmp/novnc-logs/websockify.log
+              exit 1
+            }
+
+      - name: Install cloudflared
+        run: |
+          curl -fL --retry 3 \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o /tmp/cloudflared
+
+          sudo install -m 755 /tmp/cloudflared \
+            /usr/local/bin/cloudflared
+
+          cloudflared --version
+
+      - name: Start Cloudflare Quick Tunnel
+        run: |
+          cloudflared tunnel \
+            --no-autoupdate \
+            --url http://127.0.0.1:6080 \
+            > /tmp/cloudflared.log 2>&1 &
+
+          echo $! > /tmp/cloudflared.pid
+
+          URL=""
+
+          for i in $(seq 1 60); do
+            URL=$(grep -Eo \
+              'https://[a-zA-Z0-9-]+\.trycloudflare\.com' \
+              /tmp/cloudflared.log | head -n 1 || true)
+
+            if [ -n "$URL" ]; then
+              break
+            fi
+
+            if ! kill -0 "$(cat /tmp/cloudflared.pid)" 2>/dev/null; then
+              echo "ERROR: cloudflared exited"
+              cat /tmp/cloudflared.log
+              exit 1
+            fi
+
+            sleep 2
+          done
+
+          if [ -z "$URL" ]; then
+            echo "ERROR: Cloudflare URL was not created"
+            cat /tmp/cloudflared.log
+            exit 1
+          fi
+
+          echo "========================================"
+          echo "DESKTOP URL: $URL/vnc.html"
+          echo "VNC PASSWORD: Abc12345"
+          echo "========================================"
+
+          echo "DESKTOP_URL=$URL/vnc.html" >> "$GITHUB_ENV"
+
+      - name: Check desktop connection
+        run: |
+          echo "Checking noVNC page..."
+          curl -fsS http://127.0.0.1:6080/vnc.html \
+            -o /dev/null
+
+          echo "Checking VNC port..."
+          ss -ltn | grep ':5901'
+
+          echo "Local services are ready."
+
+      - name: Keep Runner Alive
+        run: |
+          echo "Desktop is running."
+          echo "Open the DESKTOP URL from the previous step."
+          echo "Do not close this workflow while using the desktop."
+
+          sleep 21000
