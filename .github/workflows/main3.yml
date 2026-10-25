@@ -1,0 +1,137 @@
+name: Avica mac27
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup-avica:
+    runs-on: xcode-27
+    steps:
+      - name: Download Avica Installer
+        run: |
+          curl -L -o AvicaInstaller.pkg "https://download.avica.com/AvicaInstaller-8.1.1.9-arm64.pkg"
+          file AvicaInstaller.pkg
+
+      - name: Extract Avica from .pkg
+        run: |
+          mkdir AvicaExtract
+          cd AvicaExtract
+
+          # Extract .pkg using xar
+          xar -xf ../AvicaInstaller.pkg
+
+          echo "=== List after xar extract ==="
+          find .
+
+          # Extract main app.pkg payload
+          mkdir app_extract
+          cd app_extract
+          gzip -dc ../app.pkg/Payload | cpio -id
+          cd ..
+
+          # Extract audio driver payload (opsional)
+          mkdir driver_extract
+          cd driver_extract
+          gzip -dc ../AvicaAudioDriver.pkg/Payload | cpio -id
+          cd ..
+
+          echo "=== Find Avica.app ==="
+          find . -type d -name "Avica.app"
+
+
+      - name: Copy Avica.app to /Applications
+        run: |
+          APP_PATH=$(find AvicaExtract -type d -name "Avica.app" | head -n 1)
+          echo "Found Avica.app at $APP_PATH"
+          sudo cp -R "$APP_PATH" /Applications/Avica.app
+          ls -l /Applications/Avica.app
+
+      - name: Run Avica
+        run: |
+          /Applications/Avica.app/Contents/MacOS/Avica &
+          sleep 25
+          ps aux | grep Avica
+
+      - name: Install cliclick
+        run: brew install cliclick
+
+      - name: Click Allow button (approx coords)
+        run: |
+          sleep 10
+          cliclick c:567,339
+          sleep 15
+          cliclick c:247,231
+
+
+      - name: Take Screenshot
+        run: |
+          mkdir -p screenshots
+          sleep 20
+          screencapture -x screenshots/avica.png
+          ls -lh screenshots
+          
+      - name: Upload Screenshot as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: avica-screenshot
+          path: screenshots/avica.png
+
+      
+      - name: add user
+        run: |
+          sudo sysadminctl -addUser newuser -fullName "Nup" -password 'P@ssw0rd123'
+          sudo dscl . -append /Groups/admin GroupMembership newuser
+          id newuser
+          groups newuser
+
+      - name: Click Allow button (approx coords)
+        run: |
+          sleep 10
+          cliclick c:796,735
+          sleep 10
+          cliclick c:42,45
+          sleep 10
+          cliclick c:570,322
+          sleep 70
+          cliclick c:241,532
+          sleep 10
+          cliclick c:862,640
+          sleep 10
+          cliclick c:829,532
+          sleep 10
+          cliclick c:790,553
+          sleep 10
+          cliclick c:783,10
+          sleep 10
+          cliclick c:713,74
+        
+      - name: Take Screenshot
+        run: |
+          sleep 10
+          screencapture -x screenshots/avica1.png
+          ls -lh screenshots
+
+      - name: Upload Screenshot as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: avica-screenshot1
+          path: screenshots/avica1.png          
+          
+      - name: Download Chrome Remote Desktop Host
+        run: |
+          wget -O chrome-remote-desktop.pkg \
+          "https://drive.usercontent.google.com/download?id=12zzn57Su2xYABaH3b9Yj-61_Wls8w96s&export=download&confirm=t&uuid=faeeeeac-86ad-46ea-9451-f7b9cbf5a6db"
+
+
+      - name: Debug downloaded file
+        run: |
+          ls -lh chrome-remote-desktop.pkg
+          file chrome-remote-desktop.pkg
+          head -20 chrome-remote-desktop.pkg
+          sudo installer -pkg chrome-remote-desktop.pkg -target /
+          
+
+      - name: Keep alive (manual cancel needed)
+        run: |
+          echo "Workflow is running... press Cancel to stop."
+          while true; do sleep 60; done
