@@ -1,4 +1,3 @@
-
 name: Cloudflared Browser Desktop
 
 on:
@@ -25,7 +24,7 @@ jobs:
 
       - name: Configure VNC
         env:
-          VNC_PASSWORD: "Abc12345"
+          VNC_PASSWORD: ""
         run: |
           mkdir -p ~/.vnc
           chmod 700 ~/.vnc
