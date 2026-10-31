@@ -24,7 +24,7 @@ jobs:
 
       - name: Configure VNC
         env:
-          VNC_PASSWORD: "123467"
+          VNC_PASSWORD: "123456"
         run: |
           mkdir -p ~/.vnc
           chmod 700 ~/.vnc
